@@ -60,7 +60,12 @@ The `OctosCore` orchestrator acts as a central hardware bus controller.
 
 ### C. UI Arm & Dynamic Widgets
 - Renders simulated layout configurations based on packet requests.
-- Implements `render_dynamic_widget(intent, payload)`:
+- Implements `render_dynamic_widget(intent, payload, interactive)`:
   - `"approve_payment"`: Triggers a mock terminal approval dialog.
   - `"select_photo"`: Triggers a mock photo picker dialog.
-- Automatically generates secure, simulated biometric verification tokens (e.g. `TOKEN-VERIFY-9EFB0B8B`) to return to the caller.
+- **Asynchronous Safe Stdin Prompts**:
+  To block on user keyboard input (`std::io::stdin().read_line()`) without stalling the Tokio async runner's cooperative scheduler thread pool, the blocking read task is offloaded to a native OS thread using `tokio::task::spawn_blocking`.
+- **Approved/Declined Execution Paths**:
+  - If approved, generating a secure verification token (e.g. `TOKEN-VERIFY-9EFB0B8B`) to return to the Analysis Arm.
+  - If declined, returning `None` which translates into a rejected status payload. The Analysis Arm handles this rejection by aborting the active expense audit goal.
+

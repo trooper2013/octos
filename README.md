@@ -9,11 +9,20 @@ Octos is a bare-metal, AI-first operating system framework. This repository cont
 
 ## Running the Simulator
 
-Ensure you have a recent version of the Rust toolchain installed. Navigate to the workspace root directory and execute:
+Ensure you have a recent version of the Rust toolchain installed. Navigate to the workspace root directory and execute using one of the following modes:
 
+### 1. Automated Mode (Default)
+Runs in automated mode simulating human operator confirmations:
 ```bash
-# Run the core simulator daemon
 cargo run --bin octos-core
+```
+
+### 2. Interactive Mode
+Launches live prompt confirmations requesting stdin input from the terminal user (`y` or `yes` to approve, other key to decline):
+```bash
+cargo run --bin octos-core -- -i
+# or
+cargo run --bin octos-core -- --interactive
 ```
 
 ### Development Commands
