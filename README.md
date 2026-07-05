@@ -9,11 +9,27 @@ Octos is a bare-metal, AI-first operating system framework. This repository cont
 
 ## Running the Simulator
 
-Ensure you have a recent version of the Rust toolchain installed. To build and run the simulation, execute:
+Ensure you have a recent version of the Rust toolchain installed. Navigate to the workspace root directory and execute:
 
 ```bash
-cargo run
+# Run the core simulator daemon
+cargo run --bin octos-core
 ```
+
+### Development Commands
+
+* **Build debug workspace:**
+  ```bash
+  cargo build
+  ```
+* **Build release (optimized) workspace:**
+  ```bash
+  cargo build --release
+  ```
+* **Run syntax and type checking:**
+  ```bash
+  cargo check
+  ```
 
 This will:
 1. Spin up a multi-threaded Tokio runtime.
