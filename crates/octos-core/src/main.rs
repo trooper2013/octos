@@ -11,7 +11,16 @@ use octos_storage::{KnowledgeNode, VectorStore};
 
 #[tokio::main]
 async fn main() {
+    // Check if the user requested interactive mode
+    let args: Vec<String> = std::env::args().collect();
+    let interactive = args.iter().any(|arg| arg == "--interactive" || arg == "-i");
+
     println!("[SYSTEM LOG] [BOOT] Initializing Octos simulator runtime...");
+    if interactive {
+        println!("[SYSTEM LOG] [BOOT] Running in INTERACTIVE mode. Stdin prompts enabled.");
+    } else {
+        println!("[SYSTEM LOG] [BOOT] Running in AUTOMATED mode. Stdin prompts simulated.");
+    }
 
     // 1. Populate Vector File System
     let mut vector_store = VectorStore::new();
@@ -106,6 +115,7 @@ async fn main() {
         ui_rx,
         core_tx.clone(),
         shutdown_tx,
+        interactive,
     ));
 
     // Spawn central router task

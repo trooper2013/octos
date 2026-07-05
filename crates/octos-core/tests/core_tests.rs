@@ -66,7 +66,6 @@ async fn test_packet_routing_delivery() {
         payload_json: r#"{"data": 123}"#.to_string(),
     };
 
-    // Start router loop
     let senders_clone = core.get_senders();
     let router_handle = tokio::spawn(start_router_loop(core_rx, senders_clone));
 
@@ -103,11 +102,12 @@ async fn test_ui_arm_dynamic_widget_trigger() {
     // Send it directly to UI arm's channel
     ui_tx.send(payment_packet).await.unwrap();
 
-    // Spawn the persistent UI arm task
+    // Spawn the persistent UI arm task with interactive = false
     let ui_handle = tokio::spawn(start_ui_arm(
         ui_rx,
         core_tx,
         shutdown_tx,
+        false,
     ));
 
     // The UI arm should process it and send a PaymentConfirmation packet back to the core bus channel

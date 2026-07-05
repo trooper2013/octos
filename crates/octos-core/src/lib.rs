@@ -192,28 +192,48 @@ pub async fn start_analysis_arm(
             };
             let _ = core_tx.send(approval_packet).await;
         } else if packet.intent == "PaymentConfirmation" {
-            println!(
-                "[SYSTEM LOG] [ANALYSIS ARM] Payment authorization received from human operator."
-            );
-            println!(
-                "[SYSTEM LOG] [ANALYSIS ARM] Payload: {}",
-                packet.payload_json
-            );
-            println!(
-                "[SYSTEM LOG] [ANALYSIS ARM] Wrapping up analysis and marking goal complete."
-            );
+            if packet.payload_json.contains("\"status\":\"declined\"") || packet.payload_json.contains("\"status\": \"declined\"") {
+                println!(
+                    "[SYSTEM LOG] [ANALYSIS ARM] Payment authorization was DECLINED by the human operator."
+                );
+                println!(
+                    "[SYSTEM LOG] [ANALYSIS ARM] Aborting expense audit analysis."
+                );
 
-            // Route final update back to UI Arm to show end results
-            let final_packet = IacPacket {
-                goal_id: packet.goal_id,
-                packet_id: Uuid::new_v4(),
-                sender: packet.receiver,
-                receiver: packet.sender, // UI arm id
-                intent: "DisplayGoalResolution".to_string(),
-                latent_space_vector: None,
-                payload_json: r#"{"status": "completed", "resolution": "Analysis finished. Anomaly audited and approved."}"#.to_string(),
-            };
-            let _ = core_tx.send(final_packet).await;
+                let final_packet = IacPacket {
+                    goal_id: packet.goal_id,
+                    packet_id: Uuid::new_v4(),
+                    sender: packet.receiver,
+                    receiver: packet.sender, // UI arm id
+                    intent: "DisplayGoalResolution".to_string(),
+                    latent_space_vector: None,
+                    payload_json: r#"{"status": "cancelled", "resolution": "Analysis aborted. Anomaly was declined by human auditor."}"#.to_string(),
+                };
+                let _ = core_tx.send(final_packet).await;
+            } else {
+                println!(
+                    "[SYSTEM LOG] [ANALYSIS ARM] Payment authorization received from human operator."
+                );
+                println!(
+                    "[SYSTEM LOG] [ANALYSIS ARM] Payload: {}",
+                    packet.payload_json
+                );
+                println!(
+                    "[SYSTEM LOG] [ANALYSIS ARM] Wrapping up analysis and marking goal complete."
+                );
+
+                // Route final update back to UI Arm to show end results
+                let final_packet = IacPacket {
+                    goal_id: packet.goal_id,
+                    packet_id: Uuid::new_v4(),
+                    sender: packet.receiver,
+                    receiver: packet.sender, // UI arm id
+                    intent: "DisplayGoalResolution".to_string(),
+                    latent_space_vector: None,
+                    payload_json: r#"{"status": "completed", "resolution": "Analysis finished. Anomaly audited and approved."}"#.to_string(),
+                };
+                let _ = core_tx.send(final_packet).await;
+            }
         }
     }
     println!("[SYSTEM LOG] [ANALYSIS ARM] Persistent task terminated.");
@@ -224,6 +244,7 @@ pub async fn start_ui_arm(
     mut rx: mpsc::Receiver<IacPacket>,
     core_tx: mpsc::Sender<IacPacket>,
     shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    interactive: bool,
 ) {
     println!("[SYSTEM LOG] [UI ARM] Persistent task started.");
     
@@ -238,9 +259,11 @@ pub async fn start_ui_arm(
             println!(
                 "[SYSTEM LOG] [UI ARM] Invoking terminal dynamic widget..."
             );
-            if let Some(token) = render_dynamic_widget(&packet.intent, &packet.payload_json) {
-                // Return verification token packet to the sender (Analysis Arm)
-                let reply_packet = IacPacket {
+            
+            let result = render_dynamic_widget(&packet.intent, &packet.payload_json, interactive).await;
+            
+            let reply_packet = match result {
+                Some(token) => IacPacket {
                     goal_id: packet.goal_id,
                     packet_id: Uuid::new_v4(),
                     sender: packet.receiver,
@@ -248,9 +271,18 @@ pub async fn start_ui_arm(
                     intent: "PaymentConfirmation".to_string(),
                     latent_space_vector: None,
                     payload_json: format!(r#"{{"token": "{}", "status": "confirmed"}}"#, token),
-                };
-                let _ = core_tx.send(reply_packet).await;
-            }
+                },
+                None => IacPacket {
+                    goal_id: packet.goal_id,
+                    packet_id: Uuid::new_v4(),
+                    sender: packet.receiver,
+                    receiver: packet.sender,
+                    intent: "PaymentConfirmation".to_string(),
+                    latent_space_vector: None,
+                    payload_json: r#"{"token": "", "status": "declined"}"#.to_string(),
+                },
+            };
+            let _ = core_tx.send(reply_packet).await;
         } else if packet.intent == "DisplayGoalResolution" {
             println!(
                 "[SYSTEM LOG] [UI ARM] Displaying Final Resolution to user terminal:\n{}",
