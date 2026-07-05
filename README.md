@@ -79,7 +79,7 @@ sequenceDiagram
     Note over UI: Outputs status to user<br/>Triggers simulation exit
 ```
 
-For a detailed review of the system topology and microkernel architecture design, refer to [ARCHITECTURE.md](file:///C:/octos/octos/ARCHITECTURE.md). For details on vector file serialization and async terminal background ingestion, refer to [PERSISTENCE.md](file:///C:/octos/octos/PERSISTENCE.md).
+For a detailed review of the system topology and microkernel architecture design, refer to [ARCHITECTURE.md](file:///C:/octos/octos/ARCHITECTURE.md). For details on vector file serialization and async terminal background ingestion, refer to [PERSISTENCE.md](file:///C:/octos/octos/PERSISTENCE.md). For details on the Phase 2 PID 1 init process, Wayland compositor, and Alpine rootfs layout, refer to [architecture-phase2.md](file:///C:/octos/octos/docs/architecture-phase2.md).
 
 ### 1. Vector File System Setup
 The simulator initializes `VectorStore` (an in-memory vector database) representing the non-hierarchical vector filesystem. It is populated with mock nodes containing spreadsheet data and audit logs mapped to high-dimensional latent vectors (e.g., `[0.85, 0.15, 0.60, 0.10]`).

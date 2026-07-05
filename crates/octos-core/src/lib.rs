@@ -1,6 +1,9 @@
 pub mod ui_arm;
 pub mod ingestion;
 
+#[path = "../../../src/build_iso_layout.rs"]
+pub mod build_iso_layout;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};

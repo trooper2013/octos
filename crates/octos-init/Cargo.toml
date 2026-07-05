@@ -1,0 +1,10 @@
+[package]
+name = "octos-init"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true }
+libc = { workspace = true }

@@ -153,3 +153,29 @@ async fn test_context_ingestion() {
     daemon_handle.abort();
 }
 
+#[test]
+fn test_rootfs_generation_directory_creation() {
+    use octos_core::build_iso_layout::generate_rootfs_layout;
+    use std::path::Path;
+
+    let test_dir = "C:\\octos\\octos\\target\\test_rootfs_layout";
+    
+    let result = generate_rootfs_layout(test_dir);
+    assert!(result.is_ok());
+
+    let dirs = [
+        "bin", "sbin", "etc", "proc", "sys", "dev", "root", "usr/bin"
+    ];
+    for dir in &dirs {
+        let path = Path::new(test_dir).join(dir);
+        assert!(path.exists());
+        assert!(path.is_dir());
+    }
+
+    let init_path = Path::new(test_dir).join("sbin/init");
+    assert!(init_path.exists());
+
+    let _ = std::fs::remove_dir_all(test_dir);
+}
+
+
