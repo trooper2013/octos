@@ -1,13 +1,18 @@
+pub mod ui_arm;
+
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
 
 use octos_iac::{ArmRegistry, IacPacket};
 use octos_storage::VectorStore;
+use ui_arm::render_dynamic_widget;
 
 /// The central engine orchestrator for Octos.
 pub struct OctosCore {
     registry: Arc<RwLock<Vec<ArmRegistry>>>,
+    arm_senders: Arc<RwLock<HashMap<Uuid, mpsc::Sender<IacPacket>>>>,
     packet_tx: mpsc::Sender<IacPacket>,
 }
 
@@ -16,6 +21,7 @@ impl OctosCore {
     pub fn new(packet_tx: mpsc::Sender<IacPacket>) -> Self {
         Self {
             registry: Arc::new(RwLock::new(Vec::new())),
+            arm_senders: Arc::new(RwLock::new(HashMap::new())),
             packet_tx,
         }
     }
@@ -25,13 +31,15 @@ impl OctosCore {
         Arc::clone(&self.registry)
     }
 
-    /// Registers a capability-endowed Arm on the core bus registry.
-    pub async fn register_arm(&self, arm: ArmRegistry) {
+    /// Registers a capability-endowed Arm along with its routing channel.
+    pub async fn register_arm(&self, arm: ArmRegistry, sender: mpsc::Sender<IacPacket>) {
         println!(
             "[SYSTEM LOG] [CORE] Registering Arm '{}' (ID: {}) with capabilities: {:?}",
             arm.name, arm.arm_id, arm.capabilities
         );
         let mut registry = self.registry.write().await;
+        let mut senders = self.arm_senders.write().await;
+        senders.insert(arm.arm_id, sender);
         registry.push(arm);
     }
 
@@ -56,7 +64,7 @@ impl OctosCore {
     /// Asynchronously routes a packet through the core routing bus.
     pub async fn route_packet(&self, packet: IacPacket) {
         println!(
-            "[SYSTEM LOG] [CORE] Asynchronously routing packet {} from Arm {} to Arm {} (Intent: {})",
+            "[SYSTEM LOG] [CORE] Routing packet {} from Arm {} to Arm {} (Intent: {})",
             packet.packet_id, packet.sender, packet.receiver, packet.intent
         );
         if let Err(e) = self.packet_tx.send(packet).await {
@@ -66,145 +74,196 @@ impl OctosCore {
             );
         }
     }
+
+    /// Exposes a copy of the active senders mapping.
+    pub fn get_senders(&self) -> Arc<RwLock<HashMap<Uuid, mpsc::Sender<IacPacket>>>> {
+        Arc::clone(&self.arm_senders)
+    }
 }
 
-/// Asynchronous router execution loop that processes packets from the channel.
+/// Asynchronous router execution loop that processes packets from the channel and routes to target Arms.
 pub async fn start_router_loop(
     mut packet_rx: mpsc::Receiver<IacPacket>,
-    vector_store: Arc<VectorStore>,
-    ui_arm_id: Uuid,
-    storage_arm_id: Uuid,
-    logic_arm_id: Uuid,
-    core_sender: mpsc::Sender<IacPacket>,
+    arm_senders: Arc<RwLock<HashMap<Uuid, mpsc::Sender<IacPacket>>>>,
 ) {
     while let Some(packet) = packet_rx.recv().await {
         println!(
-            "\n[SYSTEM LOG] [BUS] Dispatching packet ID: {} | Intent: '{}'",
-            packet.packet_id, packet.intent
+            "[SYSTEM LOG] [BUS] Dispatching packet ID: {} | Intent: '{}' | Receiver: {}",
+            packet.packet_id, packet.intent, packet.receiver
         );
-
-        if packet.receiver == storage_arm_id {
-            println!(
-                "[SYSTEM LOG] [STORAGE ARM] Received request for intent: '{}'",
-                packet.intent
-            );
-            if let Some(query_vector) = &packet.latent_space_vector {
-                println!(
-                    "[SYSTEM LOG] [STORAGE ARM] Executing cosine similarity search for latent vector: {:?}",
-                    query_vector
+        let senders = arm_senders.read().await;
+        if let Some(sender) = senders.get(&packet.receiver) {
+            if let Err(e) = sender.send(packet).await {
+                eprintln!(
+                    "[SYSTEM LOG] [BUS] [ERROR] Failed to forward packet to target arm: {}",
+                    e
                 );
-                let search_results = vector_store.search(query_vector, 2);
-                println!(
-                    "[SYSTEM LOG] [STORAGE ARM] Search completed. Found {} matching knowledge nodes:",
-                    search_results.len()
-                );
-                for (idx, node) in search_results.iter().enumerate() {
-                    println!(
-                        "  -> Match #{}: Content: '{}' | ID: {} | Metadata: {:?}",
-                        idx + 1,
-                        node.content,
-                        node.id,
-                        node.metadata
-                    );
-                }
-
-                // Serialize results for transmission to the Logic Arm
-                let payload = serde_json::to_string(&search_results).unwrap_or_else(|_| "[]".to_string());
-
-                let response_packet = IacPacket {
-                    goal_id: packet.goal_id,
-                    packet_id: Uuid::new_v4(),
-                    sender: storage_arm_id,
-                    receiver: logic_arm_id,
-                    intent: "ProcessSearchResults".to_string(),
-                    latent_space_vector: None,
-                    payload_json: payload,
-                };
-
-                println!(
-                    "[SYSTEM LOG] [STORAGE ARM] Emitting response packet to Logic Arm for processing..."
-                );
-                let _ = core_sender.send(response_packet).await;
-            } else {
-                println!(
-                    "[SYSTEM LOG] [STORAGE ARM] [WARNING] Missing query vector in search packet."
-                );
-            }
-        } else if packet.receiver == logic_arm_id {
-            println!(
-                "[SYSTEM LOG] [LOGIC ARM] Received request for intent: '{}'",
-                packet.intent
-            );
-            println!(
-                "[SYSTEM LOG] [LOGIC ARM] Serialized Payload: {}",
-                packet.payload_json
-            );
-            println!(
-                "[SYSTEM LOG] [LOGIC ARM] Executing mock logical reasoning on retrieved filesystem content..."
-            );
-
-            // Send notification back to UI Arm
-            let reply_packet = IacPacket {
-                goal_id: packet.goal_id,
-                packet_id: Uuid::new_v4(),
-                sender: logic_arm_id,
-                receiver: ui_arm_id,
-                intent: "DisplayGoalResolution".to_string(),
-                latent_space_vector: None,
-                payload_json: r#"{"status": "success", "output": "Memory management allocations verified: zero-copy capabilities successfully configured."}"#.to_string(),
-            };
-
-            println!(
-                "[SYSTEM LOG] [LOGIC ARM] Emitting goal resolution response to UI Arm..."
-            );
-            let _ = core_sender.send(reply_packet).await;
-        } else if packet.receiver == ui_arm_id {
-            println!(
-                "[SYSTEM LOG] [UI ARM] Received request for intent: '{}'",
-                packet.intent
-            );
-
-            if packet.intent == "PaymentApproval" {
-                println!(
-                    "[SYSTEM LOG] [UI ARM] [WIDGET] Payment approval terminal widget has been triggered."
-                );
-                // Generate a confirmation token
-                let confirmation_token = "CONFIRM_TOKEN_1234";
-                println!(
-                    "[SYSTEM LOG] [UI ARM] [WIDGET] Generated confirmation token: {}",
-                    confirmation_token
-                );
-                
-                // Route packet back to the core pipeline (Logic Arm or back to sender)
-                let confirm_packet = IacPacket {
-                    goal_id: packet.goal_id,
-                    packet_id: Uuid::new_v4(),
-                    sender: ui_arm_id,
-                    receiver: packet.sender, // route back to the original sender
-                    intent: "PaymentConfirmation".to_string(),
-                    latent_space_vector: None,
-                    payload_json: format!(r#"{{"status": "confirmed", "token": "{}"}}"#, confirmation_token),
-                };
-
-                println!(
-                    "[SYSTEM LOG] [UI ARM] [WIDGET] Emitting human confirmation token packet back to the loop..."
-                );
-                let _ = core_sender.send(confirm_packet).await;
-            } else {
-                println!(
-                    "[SYSTEM LOG] [UI ARM] Rendering output to user console:\n{}",
-                    packet.payload_json
-                );
-                println!(
-                    "[SYSTEM LOG] [UI ARM] State goal successfully completed. Terminating simulator run loop."
-                );
-                break;
             }
         } else {
-            println!(
-                "[SYSTEM LOG] [CORE] [WARNING] Packet addressed to unknown arm ID: {}",
+            eprintln!(
+                "[SYSTEM LOG] [BUS] [WARNING] Destination Arm {} is not active or registered.",
                 packet.receiver
             );
         }
     }
+}
+
+/// Persistent Storage Arm task processing vector DB search requests.
+pub async fn start_storage_arm(
+    mut rx: mpsc::Receiver<IacPacket>,
+    vector_store: Arc<VectorStore>,
+    core_tx: mpsc::Sender<IacPacket>,
+) {
+    println!("[SYSTEM LOG] [STORAGE ARM] Persistent task started.");
+    while let Some(packet) = rx.recv().await {
+        println!(
+            "[SYSTEM LOG] [STORAGE ARM] Received request for intent: '{}'",
+            packet.intent
+        );
+        if packet.intent == "SearchVectorFileSystem" {
+            if let Some(query_vector) = &packet.latent_space_vector {
+                println!(
+                    "[SYSTEM LOG] [STORAGE ARM] Performing cosine similarity search..."
+                );
+                let search_results = vector_store.search(query_vector, 2);
+                println!(
+                    "[SYSTEM LOG] [STORAGE ARM] Found {} nodes:",
+                    search_results.len()
+                );
+                for (idx, node) in search_results.iter().enumerate() {
+                    println!(
+                        "  -> Match #{}: '{}' (Metadata: {:?})",
+                        idx + 1,
+                        node.content,
+                        node.metadata
+                    );
+                }
+
+                let payload = serde_json::to_string(&search_results).unwrap_or_else(|_| "[]".to_string());
+                let response = IacPacket {
+                    goal_id: packet.goal_id,
+                    packet_id: Uuid::new_v4(),
+                    sender: packet.receiver,
+                    receiver: packet.sender, // send back to the requester (Analysis Arm)
+                    intent: "ProcessSearchResults".to_string(),
+                    latent_space_vector: None,
+                    payload_json: payload,
+                };
+                let _ = core_tx.send(response).await;
+            }
+        }
+    }
+    println!("[SYSTEM LOG] [STORAGE ARM] Persistent task terminated.");
+}
+
+/// Persistent Analysis Arm task processing search results, detecting anomalies, and coordinating approval.
+pub async fn start_analysis_arm(
+    mut rx: mpsc::Receiver<IacPacket>,
+    core_tx: mpsc::Sender<IacPacket>,
+    ui_arm_id: Uuid,
+) {
+    println!("[SYSTEM LOG] [ANALYSIS ARM] Persistent task started.");
+    while let Some(packet) = rx.recv().await {
+        println!(
+            "[SYSTEM LOG] [ANALYSIS ARM] Received request for intent: '{}'",
+            packet.intent
+        );
+        if packet.intent == "ProcessSearchResults" {
+            println!(
+                "[SYSTEM LOG] [ANALYSIS ARM] Parsing spreadsheet vector data..."
+            );
+            // Simulate anomaly detection
+            println!(
+                "[SYSTEM LOG] [ANALYSIS ARM] [ANOMALY DETECTED] Expense spreadsheet contains unexpected $5000 wire transfer."
+            );
+            println!(
+                "[SYSTEM LOG] [ANALYSIS ARM] Demanding human confirmation for verification."
+            );
+
+            // Send intent to UI Arm
+            let approval_packet = IacPacket {
+                goal_id: packet.goal_id,
+                packet_id: Uuid::new_v4(),
+                sender: packet.receiver, // analysis arm id
+                receiver: ui_arm_id,
+                intent: "approve_payment".to_string(),
+                latent_space_vector: None,
+                payload_json: r#"{"amount": 5000, "description": "Vendor Z wire anomaly"}"#.to_string(),
+            };
+            let _ = core_tx.send(approval_packet).await;
+        } else if packet.intent == "PaymentConfirmation" {
+            println!(
+                "[SYSTEM LOG] [ANALYSIS ARM] Payment authorization received from human operator."
+            );
+            println!(
+                "[SYSTEM LOG] [ANALYSIS ARM] Payload: {}",
+                packet.payload_json
+            );
+            println!(
+                "[SYSTEM LOG] [ANALYSIS ARM] Wrapping up analysis and marking goal complete."
+            );
+
+            // Route final update back to UI Arm to show end results
+            let final_packet = IacPacket {
+                goal_id: packet.goal_id,
+                packet_id: Uuid::new_v4(),
+                sender: packet.receiver,
+                receiver: packet.sender, // UI arm id
+                intent: "DisplayGoalResolution".to_string(),
+                latent_space_vector: None,
+                payload_json: r#"{"status": "completed", "resolution": "Analysis finished. Anomaly audited and approved."}"#.to_string(),
+            };
+            let _ = core_tx.send(final_packet).await;
+        }
+    }
+    println!("[SYSTEM LOG] [ANALYSIS ARM] Persistent task terminated.");
+}
+
+/// Persistent UI Arm task handling display rendering, widget triggering, and shutdown orchestration.
+pub async fn start_ui_arm(
+    mut rx: mpsc::Receiver<IacPacket>,
+    core_tx: mpsc::Sender<IacPacket>,
+    shutdown_tx: tokio::sync::oneshot::Sender<()>,
+) {
+    println!("[SYSTEM LOG] [UI ARM] Persistent task started.");
+    
+    let mut shutdown_tx = Some(shutdown_tx);
+
+    while let Some(packet) = rx.recv().await {
+        println!(
+            "[SYSTEM LOG] [UI ARM] Received request for intent: '{}'",
+            packet.intent
+        );
+        if packet.intent == "approve_payment" || packet.intent == "select_photo" {
+            println!(
+                "[SYSTEM LOG] [UI ARM] Invoking terminal dynamic widget..."
+            );
+            if let Some(token) = render_dynamic_widget(&packet.intent, &packet.payload_json) {
+                // Return verification token packet to the sender (Analysis Arm)
+                let reply_packet = IacPacket {
+                    goal_id: packet.goal_id,
+                    packet_id: Uuid::new_v4(),
+                    sender: packet.receiver,
+                    receiver: packet.sender,
+                    intent: "PaymentConfirmation".to_string(),
+                    latent_space_vector: None,
+                    payload_json: format!(r#"{{"token": "{}", "status": "confirmed"}}"#, token),
+                };
+                let _ = core_tx.send(reply_packet).await;
+            }
+        } else if packet.intent == "DisplayGoalResolution" {
+            println!(
+                "[SYSTEM LOG] [UI ARM] Displaying Final Resolution to user terminal:\n{}",
+                packet.payload_json
+            );
+            println!(
+                "[SYSTEM LOG] [UI ARM] Triggering simulator shutdown..."
+            );
+            if let Some(tx) = shutdown_tx.take() {
+                let _ = tx.send(());
+            }
+            break;
+        }
+    }
+    println!("[SYSTEM LOG] [UI ARM] Persistent task terminated.");
 }
