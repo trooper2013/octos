@@ -2,22 +2,22 @@
 
 This document specifies the persistence layout and dynamic context ingestion models used by the **Octos** User-Space Simulator to index and retrieve VFS state across sessions.
 
-## 1. Binary Serialization Schema
-Octos avoids bloated hierarchical storage in favor of a file-backed binary vector database.
-- **Serialization Engine**: Bincode (`bincode` crate), wrapping standard `serde` derive hooks.
-- **Path Location**: `C:\octos\octos\vector_store.bin`
+## 1. JSON Database Serialization Schema
+Octos avoids bloated hierarchical storage in favor of a file-backed JSON vector database.
+- **Serialization Engine**: Serde JSON (`serde_json` crate), wrapping standard `serde` derive hooks.
+- **Path Location**: `C:\octos\octos\storage.db`
 - **Boot Lifecycle**:
   ```text
   [System Boot]
         │
         ├──► check path exists?
         │      ├──► No: Initialize empty VectorStore
-        │      │        populate default system node arrays
-        │      │        write to disk (bootstrap)
+        │      │        populate default 384-dimensional system node arrays
+        │      │        write to disk (bootstrap initial JSON)
         │      │
         │      └──► Yes: Load bytes from file
-        │                deserialize into VectorStore struct
-        │                run verification query matching history
+        │                deserialize JSON into VectorStore struct
+        │                run 384-dimensional validation query matching history
   ```
 
 ---
@@ -30,11 +30,11 @@ flowchart TD
     UserInput([User Command/Goal String])
     Daemon[Ingestion Daemon Task]
     VFS_Write[VectorStore Write Lock]
-    Disk[Save to vector_store.bin]
+    Disk[Save to storage.db]
 
     UserInput -->|mpsc channel| Daemon
     Daemon -->|1. Tokenize/Slice text| Chunk[Slice by '.', ';', ',']
-    Chunk -->|2. Compute vector| Embed[Generate Mock 4D Embedding]
+    Chunk -->|2. Compute vector| Embed[Generate Dense 384-dim Embedding]
     Embed -->|3. Dynamic write| VFS_Write
     VFS_Write -->|4. Persist on exit| Disk
 ```
@@ -42,16 +42,16 @@ flowchart TD
 ### Text Chunking
 Long inputs are dynamically sliced by punctuation boundary delimiters (e.g. `.` `,` `;`) into individual semantic context chunks to isolate search scopes.
 
-### Mock Sparse Embedding Generation
-For each text chunk, Octos calculates a normalized unit-length 4D vector using relative frequencies:
-- **Dimension 0**: Normalized Vowel count ($N_{vowels} / N_{chars}$).
-- **Dimension 1**: Normalized Consonant count ($N_{consonants} / N_{chars}$).
-- **Dimension 2**: Normalized Special Character/Whitespace count.
-- **Dimension 3**: Seed value constant ($0.5$).
+### Dense 384-Dimensional Embedding Generation
+For each text chunk, Octos calculates a normalized unit-length 384-dimensional vector using:
+1. **Character Distribution**: Distributes character codes across the 384 dimensions modulo indices.
+2. **Frequency Density Modifier**: Adds a deterministic sine-based frequency modifier to build a dense vector structure.
+3. **Unit Normalization**: Normalizes the vector to unit length so that Cosine Similarity ranks semantic matches consistently:
+   $$\|\mathbf{v}\| = \sqrt{\sum_{i=1}^{384} v_i^2}$$
+   $$v_i \leftarrow \frac{v_i}{\|\mathbf{v}\|}$$
 
-The vector is normalized to unit length so that Cosine Similarity ranks semantic matches consistently:
-$$\|\mathbf{v}\| = \sqrt{v_0^2 + v_1^2 + v_2^2 + v_3^2}$$
-$$v_i \leftarrow \frac{v_i}{\|\mathbf{v}\|}$$
+### Strict Bounds Verification
+To prevent kernel panics, the `VectorStore::search` interface verifies that the query vector has exactly 384 dimensions. Bounds failures log a warning and return empty results safely.
 
 ---
 
