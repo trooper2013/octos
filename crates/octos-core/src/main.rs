@@ -8,7 +8,7 @@ use octos_core::{
     start_storage_arm, start_ui_arm, OctosCore,
 };
 use octos_iac::{ArmCapability, ArmRegistry, IacPacket};
-use octos_storage::{persistent_graph, KnowledgeNode, VectorStore};
+use octos_storage::{KnowledgeNode, VectorStore};
 
 #[tokio::main]
 async fn main() {
@@ -17,31 +17,30 @@ async fn main() {
 
     println!("[SYSTEM LOG] [BOOT] Initializing Octos simulator runtime...");
     if interactive {
-        println!("[SYSTEM LOG] [BOOT] Running in INTERACTIVE mode. Stdin prompts enabled.");
+        println!("[SYSTEM LOG] [BOOT] Running in INTERACTIVE mode. Stdin shell enabled.");
     } else {
-        println!("[SYSTEM LOG] [BOOT] Running in AUTOMATED mode. Stdin prompts simulated.");
+        println!("[SYSTEM LOG] [BOOT] Running in AUTOMATED mode. Stdin shell simulated.");
     }
 
-    // 1. Boot sequence - Load Vector DB from Disk
-    let store_path = "C:\\octos\\octos\\vector_store.bin";
+    // 1. Boot sequence - Load Vector DB from Disk (JSON format storage.db)
+    let store_path = "C:\\octos\\octos\\storage.db";
     println!("[SYSTEM LOG] [BOOT] Loading vector filesystem from disk at {}...", store_path);
     
-    let mut db_store = persistent_graph::load_from_disk(store_path)
-        .await
+    let mut db_store = VectorStore::load_from_disk(store_path)
         .unwrap_or_else(|e| {
-            eprintln!("[SYSTEM LOG] [BOOT] [WARNING] Failed to load from disk: {}. Initializing empty database.", e);
+            eprintln!("[SYSTEM LOG] [BOOT] [WARNING] Failed to load database: {}. Initializing empty database.", e);
             VectorStore::new()
         });
 
     if db_store.nodes.is_empty() {
-        println!("[SYSTEM LOG] [BOOT] Historical database not found. Populating default system nodes...");
+        println!("[SYSTEM LOG] [BOOT] Historical database not found. Populating default 384-dimensional nodes...");
         
         let mut meta1 = HashMap::new();
         meta1.insert("layer".to_string(), "user".to_string());
         meta1.insert("type".to_string(), "spreadsheet".to_string());
         db_store.insert(KnowledgeNode {
             id: Uuid::new_v4(),
-            vector: vec![0.10, 0.90, 0.20, 0.40],
+            vector: octos_core::ingestion::generate_mock_embedding("Q2 expense spreadsheet: Marketing flight tickets to SF cost $1200."),
             content: "Q2 expense spreadsheet: Marketing flight tickets to SF cost $1200.".to_string(),
             metadata: meta1,
         });
@@ -51,7 +50,7 @@ async fn main() {
         meta2.insert("type".to_string(), "audit_log".to_string());
         db_store.insert(KnowledgeNode {
             id: Uuid::new_v4(),
-            vector: vec![0.85, 0.15, 0.60, 0.10],
+            vector: octos_core::ingestion::generate_mock_embedding("Internal Audit: Spreadsheet raw lines show $5000 wire transfer anomaly to vendor Z."),
             content: "Internal Audit: Spreadsheet raw lines show $5000 wire transfer anomaly to vendor Z.".to_string(),
             metadata: meta2,
         });
@@ -61,21 +60,21 @@ async fn main() {
         meta3.insert("type".to_string(), "budget_layout".to_string());
         db_store.insert(KnowledgeNode {
             id: Uuid::new_v4(),
-            vector: vec![0.30, 0.40, 0.80, 0.10],
+            vector: octos_core::ingestion::generate_mock_embedding("Engineering compute budget layout: $300 AWS billing."),
             content: "Engineering compute budget layout: $300 AWS billing.".to_string(),
             metadata: meta3,
         });
 
         // Save fresh database to disk
-        if let Err(e) = persistent_graph::save_to_disk(&db_store, store_path).await {
+        if let Err(e) = db_store.save_to_disk(store_path) {
             eprintln!("[SYSTEM LOG] [BOOT] [ERROR] Failed to save initial database: {}", e);
         } else {
             println!("[SYSTEM LOG] [BOOT] Initial database persisted to disk.");
         }
     } else {
         println!("[SYSTEM LOG] [BOOT] Historical database loaded. Total nodes: {}", db_store.nodes.len());
-        // Verify past inputs can be found semantically
-        let verify_vector = vec![0.80, 0.10, 0.50, 0.10];
+        // Verify past inputs can be found semantically using 384-dimensional query
+        let verify_vector = octos_core::ingestion::generate_mock_embedding("expense spreadsheet anomaly");
         let search_verify = db_store.search(&verify_vector, 1);
         if let Some(best_match) = search_verify.first() {
             println!(
@@ -156,15 +155,35 @@ async fn main() {
     let senders_clone = core.get_senders();
     let router_handle = tokio::spawn(start_router_loop(core_rx, senders_clone));
 
-    // 9. Inject user goal
-    let goal_desc = "Analyze my local expense spreadsheets from last month and flag anomalies.";
-    core.broadcast_goal(Uuid::new_v4(), goal_desc).await;
+    // 9. Input Shell Decoupling via tokio::task::spawn_blocking
+    let goal_desc = if interactive {
+        let handle = tokio::task::spawn_blocking(|| {
+            use std::io::{self, Write};
+            println!("\n========================================================");
+            print!("octos> Enter Goal Description: ");
+            let _ = io::stdout().flush();
+            let mut input = String::new();
+            if io::stdin().read_line(&mut input).is_ok() {
+                let trimmed = input.trim().to_string();
+                if !trimmed.is_empty() {
+                    return trimmed;
+                }
+            }
+            "Analyze my local expense spreadsheets from last month and flag anomalies.".to_string()
+        });
+        handle.await.unwrap_or_else(|_| "Analyze my local expense spreadsheets from last month and flag anomalies.".to_string())
+    } else {
+        "Analyze my local expense spreadsheets from last month and flag anomalies.".to_string()
+    };
+
+    // Broadcast the goal to the system logs
+    core.broadcast_goal(Uuid::new_v4(), &goal_desc).await;
 
     // Log the user's interactive goal input asynchronously to disk via the Ingestion Daemon
-    let _ = ingest_tx.send(goal_desc.to_string()).await;
+    let _ = ingest_tx.send(goal_desc.clone()).await;
 
-    // Dispatch the first user packet from Analysis Arm to the Storage Arm
-    let query_vector = vec![0.80, 0.10, 0.50, 0.10];
+    // Dispatch the first user packet from Analysis Arm to the Storage Arm using a 384-dimensional query vector
+    let query_vector = octos_core::ingestion::generate_mock_embedding(&goal_desc);
     let query_packet = IacPacket {
         goal_id: Uuid::new_v4(),
         packet_id: Uuid::new_v4(),
@@ -172,7 +191,7 @@ async fn main() {
         receiver: storage_arm_id,
         intent: "SearchVectorFileSystem".to_string(),
         latent_space_vector: Some(query_vector),
-        payload_json: r#"{"query": "expense spreadsheet anomaly"}"#.to_string(),
+        payload_json: format!(r#"{{"query": "{}"}}"#, goal_desc),
     };
 
     println!("[SYSTEM LOG] [CORE] Injecting first semantic search request on behalf of Analysis Arm...");
@@ -184,7 +203,7 @@ async fn main() {
     // Save final vector database back to disk before terminating
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await; // allow final ingestion daemon tasks to complete
     let final_store = vector_store.read().await;
-    if let Err(e) = persistent_graph::save_to_disk(&final_store, store_path).await {
+    if let Err(e) = final_store.save_to_disk(store_path) {
         eprintln!("[SYSTEM LOG] [SHUTDOWN] [ERROR] Failed to save database to disk: {}", e);
     } else {
         println!("[SYSTEM LOG] [SHUTDOWN] Vector database persisted to disk successfully.");

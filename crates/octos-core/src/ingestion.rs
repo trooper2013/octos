@@ -6,7 +6,7 @@ use uuid::Uuid;
 use octos_storage::{KnowledgeNode, VectorStore};
 
 /// Background task that automatically intercepts input strings, slices them,
-/// generates mock embeddings, and stores them in the persistent VectorStore.
+/// generates dense 384-dimensional mock embeddings, and stores them in the persistent VectorStore.
 pub async fn start_ingestion_daemon(
     mut rx: mpsc::Receiver<String>,
     vector_store: Arc<RwLock<VectorStore>>,
@@ -26,13 +26,13 @@ pub async fn start_ingestion_daemon(
             .collect();
 
         for chunk in chunks {
-            // Generate mock 4D embedding
+            // Generate mock dense 384D embedding
             let vector = generate_mock_embedding(chunk);
             let node_id = Uuid::new_v4();
 
             println!(
-                "[SYSTEM LOG] [INGESTION DAEMON] Ingesting chunk: \"{}\" | Vector: {:?}",
-                chunk, vector
+                "[SYSTEM LOG] [INGESTION DAEMON] Ingesting chunk: \"{}\" | 384-dim Vector generated.",
+                chunk
             );
 
             let timestamp = std::time::SystemTime::now()
@@ -59,21 +59,28 @@ pub async fn start_ingestion_daemon(
     println!("[SYSTEM LOG] [INGESTION DAEMON] Ingestion task terminated.");
 }
 
-/// Generates a reproducible mock 4D embedding vector normalized to unit length.
+/// Generates a reproducible mock 384-dimensional embedding vector normalized to unit length.
 pub fn generate_mock_embedding(text: &str) -> Vec<f32> {
-    let chars = text.chars().count() as f32;
-    if chars == 0.0 {
-        return vec![0.0, 0.0, 0.0, 0.0];
+    let mut vec = vec![0.0f32; 384];
+    if text.is_empty() {
+        return vec;
     }
-    let vowels = text.chars().filter(|c| "aeiouAEIOU".contains(*c)).count() as f32;
-    let consonants = text.chars().filter(|c| c.is_alphabetic() && !"aeiouAEIOU".contains(*c)).count() as f32;
-    let special = chars - vowels - consonants;
-    
-    // Create base 4D vector
-    let mut vec = vec![vowels / chars, consonants / chars, special / chars, 0.5];
-    
+
+    // Distribute character codes across the 384 elements
+    for (i, c) in text.chars().enumerate() {
+        let val = c as u32;
+        let idx = (val as usize + i) % 384;
+        vec[idx] += 1.0;
+    }
+
+    // Inject density modifier
+    for i in 0..384 {
+        let frequency_modifier = (text.len() as f32 * (i as f32).sin()).abs();
+        vec[i] += frequency_modifier % 1.5;
+    }
+
     // Normalize to unit length for accurate cosine similarity
-    let norm = (vec[0]*vec[0] + vec[1]*vec[1] + vec[2]*vec[2] + vec[3]*vec[3]).sqrt();
+    let norm = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
     if norm > 0.0 {
         for x in vec.iter_mut() {
             *x /= norm;

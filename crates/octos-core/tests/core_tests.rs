@@ -141,9 +141,13 @@ async fn test_context_ingestion() {
     let store_read = store.read().await;
     assert_eq!(store_read.nodes.len(), 4);
     assert_eq!(store_read.nodes[0].content, "Hello world");
+    assert_eq!(store_read.nodes[0].vector.len(), 384);
     assert_eq!(store_read.nodes[1].content, "this is a test");
+    assert_eq!(store_read.nodes[1].vector.len(), 384);
     assert_eq!(store_read.nodes[2].content, "Let us verify ingestion");
+    assert_eq!(store_read.nodes[2].vector.len(), 384);
     assert_eq!(store_read.nodes[3].content, "it should split correctly");
+    assert_eq!(store_read.nodes[3].vector.len(), 384);
 
     // Clean up
     daemon_handle.abort();
