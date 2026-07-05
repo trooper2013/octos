@@ -42,12 +42,12 @@ cargo run --bin octos-core -- --interactive
 
 This will:
 1. Spin up a multi-threaded Tokio runtime.
-2. Initialize the `VectorStore` with mock knowledge nodes representing documentation, code, and user data.
-3. Register mock Arms: Storage Arm, Logic Arm, and UI Arm.
-4. Trigger a simulated user semantic query goal.
-5. Asynchronously route IAC packets through the channel-based message bus.
-6. Perform real-time cosine similarity search on the Vector File System.
-7. Print detailed execution tracing.
+2. Load the historical database from `vector_store.bin` (or bootstrap initial spreadsheet nodes if first run).
+3. Conduct semantic validation checking that past inputs match.
+4. Spawn the background Ingestion Daemon worker task.
+5. Register persistent Arms (Storage, Analysis, UI).
+6. Route the packet lifecycle, capturing operator goals and inputs to slice, embed, and append them dynamically.
+7. Save DB updates back to disk before terminating.
 
 ## How the Simulator Works
 
@@ -79,7 +79,7 @@ sequenceDiagram
     Note over UI: Outputs status to user<br/>Triggers simulation exit
 ```
 
-For a detailed review of the system topology and microkernel architecture design, refer to [ARCHITECTURE.md](file:///C:/octos/octos/ARCHITECTURE.md).
+For a detailed review of the system topology and microkernel architecture design, refer to [ARCHITECTURE.md](file:///C:/octos/octos/ARCHITECTURE.md). For details on vector file serialization and async terminal background ingestion, refer to [PERSISTENCE.md](file:///C:/octos/octos/PERSISTENCE.md).
 
 ### 1. Vector File System Setup
 The simulator initializes `VectorStore` (an in-memory vector database) representing the non-hierarchical vector filesystem. It is populated with mock nodes containing spreadsheet data and audit logs mapped to high-dimensional latent vectors (e.g., `[0.85, 0.15, 0.60, 0.10]`).

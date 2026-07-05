@@ -1,4 +1,5 @@
 pub mod ui_arm;
+pub mod ingestion;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -111,7 +112,7 @@ pub async fn start_router_loop(
 /// Persistent Storage Arm task processing vector DB search requests.
 pub async fn start_storage_arm(
     mut rx: mpsc::Receiver<IacPacket>,
-    vector_store: Arc<VectorStore>,
+    vector_store: Arc<RwLock<VectorStore>>,
     core_tx: mpsc::Sender<IacPacket>,
 ) {
     println!("[SYSTEM LOG] [STORAGE ARM] Persistent task started.");
@@ -125,7 +126,8 @@ pub async fn start_storage_arm(
                 println!(
                     "[SYSTEM LOG] [STORAGE ARM] Performing cosine similarity search..."
                 );
-                let search_results = vector_store.search(query_vector, 2);
+                let store_read = vector_store.read().await;
+                let search_results = store_read.search(query_vector, 2);
                 println!(
                     "[SYSTEM LOG] [STORAGE ARM] Found {} nodes:",
                     search_results.len()

@@ -71,3 +71,5 @@ pub fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
 
     dot_product / (norm_v1 * norm_v2)
 }
+
+pub mod persistent_graph;

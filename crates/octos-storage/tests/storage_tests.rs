@@ -83,3 +83,33 @@ fn test_search_limit_enforcement() {
     let results = store.search(&[1.0, 0.0, 0.0, 0.0], 2);
     assert_eq!(results.len(), 2);
 }
+
+#[tokio::test]
+async fn test_persistence_roundtrip() {
+    use octos_storage::persistent_graph::{save_to_disk, load_from_disk};
+    let test_path = "C:\\octos\\octos\\temp_test_store.bin";
+    
+    let mut store = VectorStore::new();
+    let node_id = Uuid::new_v4();
+    let mut metadata = HashMap::new();
+    metadata.insert("source".to_string(), "test".to_string());
+    
+    store.insert(KnowledgeNode {
+        id: node_id,
+        vector: vec![0.1, 0.2, 0.3, 0.4],
+        content: "Test persistence content".to_string(),
+        metadata,
+    });
+
+    save_to_disk(&store, test_path).await.expect("Failed to save store");
+
+    let loaded = load_from_disk(test_path).await.expect("Failed to load store");
+    assert_eq!(loaded.nodes.len(), 1);
+    assert_eq!(loaded.nodes[0].id, node_id);
+    assert_eq!(loaded.nodes[0].content, "Test persistence content");
+    assert_eq!(loaded.nodes[0].vector, vec![0.1, 0.2, 0.3, 0.4]);
+    assert_eq!(loaded.nodes[0].metadata.get("source").unwrap(), "test");
+
+    let _ = tokio::fs::remove_file(test_path).await;
+}
+

@@ -1,8 +1,10 @@
-use tokio::sync::{mpsc, oneshot};
+use std::sync::Arc;
+use tokio::sync::{mpsc, oneshot, RwLock};
 use uuid::Uuid;
 
 use octos_core::{start_router_loop, start_ui_arm, OctosCore};
 use octos_iac::{ArmCapability, ArmRegistry, IacPacket};
+use octos_storage::VectorStore;
 
 #[tokio::test]
 async fn test_async_arm_registration() {
@@ -121,3 +123,29 @@ async fn test_ui_arm_dynamic_widget_trigger() {
     drop(ui_tx);
     let _ = ui_handle.await;
 }
+
+#[tokio::test]
+async fn test_context_ingestion() {
+    use octos_core::ingestion::start_ingestion_daemon;
+    let store = Arc::new(RwLock::new(VectorStore::new()));
+    let (ingest_tx, ingest_rx) = mpsc::channel::<String>(10);
+
+    let daemon_handle = tokio::spawn(start_ingestion_daemon(ingest_rx, Arc::clone(&store)));
+
+    let test_input = "Hello world, this is a test. Let us verify ingestion; it should split correctly.".to_string();
+    ingest_tx.send(test_input).await.unwrap();
+
+    // Sleep a bit to allow ingestion to run
+    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
+    let store_read = store.read().await;
+    assert_eq!(store_read.nodes.len(), 4);
+    assert_eq!(store_read.nodes[0].content, "Hello world");
+    assert_eq!(store_read.nodes[1].content, "this is a test");
+    assert_eq!(store_read.nodes[2].content, "Let us verify ingestion");
+    assert_eq!(store_read.nodes[3].content, "it should split correctly");
+
+    // Clean up
+    daemon_handle.abort();
+}
+
